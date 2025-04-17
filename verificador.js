@@ -3,94 +3,80 @@ const qrcode = require('qrcode-terminal');
 const xlsx = require('xlsx');
 const fs = require('fs');
 const express = require('express');
-const multer = require('multer');
-const path = require('path');
-
 const app = express();
 const port = process.env.PORT || 3000;
 
-const upload = multer({ dest: 'uploads/' });
-
-app.use(express.static('public'));
-
-let client;
-let whatsappReady = false;
-
-function iniciarClienteWhatsApp() {
-  client = new Client({
+const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: { headless: true }
-  });
-
-  client.on('qr', (qr) => {
-    qrcode.generate(qr, { small: true });
-    console.log('Escanea el QR con tu WhatsApp');
-  });
-
-  client.on('ready', () => {
-    console.log('Cliente de WhatsApp listo');
-    whatsappReady = true;
-  });
-
-  client.initialize();
-}
-
-iniciarClienteWhatsApp();
-
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public/index.html'));
 });
 
-app.post('/subir', upload.single('archivo'), async (req, res) => {
-  if (!whatsappReady) {
-    return res.status(500).send('Cliente de WhatsApp no está listo');
-  }
+client.on('qr', (qr) => {
+    qrcode.generate(qr, { small: true });
+    console.log('Escanea el QR con tu WhatsApp');
+});
 
-  const rutaExcel = req.file.path;
-  const resultados = [];
+client.on('ready', async () => {
+    console.log('Cliente listo');
 
-  try {
-    const workbook = xlsx.readFile(rutaExcel);
-    const hoja = workbook.Sheets[workbook.SheetNames[0]];
-    const data = xlsx.utils.sheet_to_json(hoja);
+    const heartbeat = setInterval(() => {
+        console.log(`Heartbeat-El proceso sigue corriendo...`);
+    }, 30000); // 30 seg
 
-    let index = 1;
-    for (const fila of data) {
-      const numero = fila.Numero.toString().replace(/\D/g, '');
-      const chatId = `${numero}@c.us`;
+    try {
+        const workbook = xlsx.readFile('Numeros.xlsx');
+        const hoja = workbook.Sheets[workbook.SheetNames[0]];
+        const data = xlsx.utils.sheet_to_json(hoja);
 
-      let tieneWhatsApp = false;
-      try {
-        tieneWhatsApp = await client.isRegisteredUser(chatId);
-      } catch (error) {
-        console.log(` Error con el número ${numero}: ${error.message}`);
-      }
+        const resultados = [];
 
-      console.log(`${index}. ${numero}: ${tieneWhatsApp ? 'Sí' : 'No'}`);
-      resultados.push({
-        Numero: numero,
-        TieneWhatsApp: tieneWhatsApp ? 'Sí' : 'No'
-      });
-      index++;
+        let index = 1;
+        for (const fila of data) {
+            const numero = fila.Numero.toString().replace(/\D/g, ''); 
+            const chatId = `${numero}@c.us`;
+
+            let tieneWhatsApp = false;
+            try {
+                tieneWhatsApp = await client.isRegisteredUser(chatId);
+            } catch (error) {
+                console.log(`Error con el número ${numero}: ${error.message}`);
+            }
+
+            console.log(`${index}. ${numero}: ${tieneWhatsApp ? 'Sí' : 'No'}`);
+            resultados.push({
+                Numero: numero,
+                TieneWhatsApp: tieneWhatsApp ? 'Sí' : 'No'
+            });
+
+            index++;
+        }
+
+        const nuevaHoja = xlsx.utils.json_to_sheet(resultados);
+        const nuevoLibro = xlsx.utils.book_new();
+        xlsx.utils.book_append_sheet(nuevoLibro, nuevaHoja, 'Resultados');
+        xlsx.writeFile(nuevoLibro, 'verificados.xlsx');
+
+        console.log('Verificación terminada. Resultados guardados en "verificados.xlsx"');
+
+    } catch (err) {
+        console.error('Error general durante el proceso:', err.message);
+    } finally {
+        clearInterval(heartbeat);
+        client.destroy();
     }
+});
 
-    const nuevaHoja = xlsx.utils.json_to_sheet(resultados);
-    const nuevoLibro = xlsx.utils.book_new();
-    xlsx.utils.book_append_sheet(nuevoLibro, nuevaHoja, 'Resultados');
-    const nombreArchivo = `verificados-${Date.now()}.xlsx`;
-    const rutaSalida = path.join(__dirname, nombreArchivo);
-    xlsx.writeFile(nuevoLibro, rutaSalida);
+client.initialize();
 
-    res.download(rutaSalida, () => {
-      fs.unlinkSync(rutaSalida);
-      fs.unlinkSync(rutaExcel);
-    });
-  } catch (err) {
-    console.error('Error procesando el archivo:', err.message);
-    res.status(500).send('Error procesando el archivo');
-  }
+app.get('/descargar', (req, res) => {
+    const path = './verificados.xlsx';
+    if (fs.existsSync(path)) {
+        res.download(path);
+    } else {
+        res.status(404).send('El archivo aún no está disponible.');
+    }
 });
 
 app.listen(port, () => {
-  console.log(`Servidor web corriendo en http://localhost:${port}`);
+    console.log(`Servidor web corriendo en http://localhost:${port}`);
 });
