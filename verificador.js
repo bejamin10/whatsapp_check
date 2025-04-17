@@ -53,3 +53,21 @@ client.on('ready', async () => {
 });
 
 client.initialize();
+
+const express = require('express');
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Ruta para descargar el archivo generado
+app.get('/descargar', (req, res) => {
+    const path = './verificados.xlsx';
+    if (fs.existsSync(path)) {
+        res.download(path);
+    } else {
+        res.status(404).send('Archivo no disponible aún.');
+    }
+});
+
+app.listen(port, () => {
+    console.log(`Servidor web corriendo en http://localhost:${port}`);
+});
